@@ -8,9 +8,12 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Management.Automation.Host;
+using System.Management.Automation.Internal;
+using System.Management.Automation.Runspaces;
 using System.Runtime.CompilerServices;
 using System.Text;
-
+using System.ComponentModel;
 using Microsoft.PowerShell.Commands;
 using Microsoft.PowerShell.DesiredStateConfiguration.Internal;
 
@@ -611,6 +614,7 @@ namespace System.Management.Automation.Language
         private string _script;
         private int _tokenStart;
         private int _currentIndex;
+        private bool _requiresDeclarationsComplete;
         private InternalScriptExtent _beginSignatureExtent;
 
         #region Tables for initialization
@@ -779,6 +783,7 @@ namespace System.Management.Automation.Language
             }
 
             _currentIndex = 0;
+            _requiresDeclarationsComplete = false;
             Mode = TokenizerMode.Command;
 
             _positionHelper.LineStartMap = lineStartMap.ToArray();
@@ -926,6 +931,7 @@ namespace System.Management.Automation.Language
                         _tokenStart = _currentIndex - 1;
                         SkipChar();
                         ScanBlockComment();
+                        _requiresDeclarationsComplete = true;
                         goto again;
                     }
 
@@ -936,12 +942,14 @@ namespace System.Management.Automation.Language
                     if (c1 == '\n' || c1 == '\r')
                     {
                         ScanLineContinuation(c1);
+                        _requiresDeclarationsComplete = true;
                         goto again;
                     }
 
                     if (char.IsWhiteSpace(c1))
                     {
                         SkipWhiteSpace();
+                        _requiresDeclarationsComplete = true;
                         goto again;
                     }
 
@@ -1787,6 +1795,20 @@ namespace System.Management.Automation.Language
                 if (RequiresTokens == null)
                     RequiresTokens = new List<Token>();
                 RequiresTokens.Add(token);
+                if (_requiresDeclarationsComplete) {
+                    PSHostUserInterface userInterface = Runspace.DefaultRunspace.ExecutionContext?.InternalHost?.UI;
+                    if (userInterface != null)
+                    {
+                        int RequiresWarningCount = (int) InternalTestHooks.GetTestHookValue("RequiresWarningCount");
+                        InternalTestHooks.SetTestHook("RequiresWarningCount", RequiresWarningCount + 1);
+                        bool SilenceRequiresWarning = (bool) InternalTestHooks.GetTestHookValue("SilenceRequiresWarning");
+                        if (!SilenceRequiresWarning)
+                        {
+                            string requiresWarning = string.Format(ParserStrings.RequiresShouldBeAtTop, token, token.Extent.StartLineNumber);
+                            userInterface.WriteWarningLine(requiresWarning);
+                        }
+                    } 
+                }
             }
         }
 
@@ -1886,12 +1908,13 @@ namespace System.Management.Automation.Language
 
             string requiredShellId = null;
             Version requiredVersion = null;
+            Version requiredMaximumPSVersion = null;
             List<string> requiredEditions = null;
             List<ModuleSpecification> requiredModules = null;
             List<PSSnapInSpecification> requiredSnapins = null;
             List<string> requiredAssemblies = null;
             bool requiresElevation = false;
-
+            List<string> requiredOSTypes = null;
             foreach (var token in requiresTokens)
             {
                 var requiresExtent = new InternalScriptExtent(_positionHelper, token.Extent.StartOffset + 1, token.Extent.EndOffset);
@@ -1937,8 +1960,9 @@ namespace System.Management.Automation.Language
                         if (parameter != null)
                         {
                             HandleRequiresParameter(parameter, commandAst.CommandElements, snapinSpecified,
-                                ref i, ref snapinName, ref snapinVersion,
-                                ref requiredShellId, ref requiredVersion, ref requiredEditions, ref requiredModules, ref requiredAssemblies, ref requiresElevation);
+                                ref i, ref snapinName, ref snapinVersion, ref requiredShellId, ref requiredVersion, 
+                                ref requiredMaximumPSVersion, ref requiredEditions, ref requiredModules, 
+                                ref requiredAssemblies, ref requiresElevation, ref requiredOSTypes);
                         }
                         else
                         {
@@ -1955,11 +1979,11 @@ namespace System.Management.Automation.Language
                     }
                 }
             }
-
             return new ScriptRequirements
             {
                 RequiredApplicationId = requiredShellId,
                 RequiredPSVersion = requiredVersion,
+                RequiredMaximumPSVersion = requiredMaximumPSVersion,
                 RequiredPSEditions = requiredEditions != null
                                                     ? new ReadOnlyCollection<string>(requiredEditions)
                                                     : ScriptRequirements.EmptyEditionCollection,
@@ -1972,7 +1996,10 @@ namespace System.Management.Automation.Language
                 RequiredModules = requiredModules != null
                                                     ? new ReadOnlyCollection<ModuleSpecification>(requiredModules)
                                                     : ScriptRequirements.EmptyModuleCollection,
-                IsElevationRequired = requiresElevation
+                IsElevationRequired = requiresElevation,
+                RequiredOSTypes = requiredOSTypes != null
+                                                    ? new ReadOnlyCollection<string>(requiredOSTypes)
+                                                    : ScriptRequirements.EmptyEditionCollection
             };
         }
 
@@ -1983,7 +2010,8 @@ namespace System.Management.Automation.Language
         private const string assemblyToken = "assembly";
         private const string modulesToken = "modules";
         private const string elevationToken = "runasadministrator";
-
+        private const string osTypesToken = "os";
+        private const string maximumPSVersionToken = "maximumpsversion";
         private void HandleRequiresParameter(CommandParameterAst parameter,
                                              ReadOnlyCollection<CommandElementAst> commandElements,
                                              bool snapinSpecified,
@@ -1992,10 +2020,12 @@ namespace System.Management.Automation.Language
                                              ref Version snapinVersion,
                                              ref string requiredShellId,
                                              ref Version requiredVersion,
+                                             ref Version requiredMaximumPSVersion,
                                              ref List<string> requiredEditions,
                                              ref List<ModuleSpecification> requiredModules,
                                              ref List<string> requiredAssemblies,
-                                             ref bool requiresElevation)
+                                             ref bool requiresElevation,
+                                             ref List<string> requiredOSTypes)
         {
             Ast argumentAst = parameter.Argument ?? (index + 1 < commandElements.Count ? commandElements[++index] : null);
 
@@ -2108,6 +2138,56 @@ namespace System.Management.Automation.Language
                         requiredEditions = HandleRequiresPSEditionArgument(argumentAst, arg, ref requiredEditions);
                     }
                 }
+            } 
+            
+            else if (osTypesToken.StartsWith(parameter.ParameterName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (requiredOSTypes != null)
+                {
+                    object errorArg1 = null;
+                    ReportError(parameter.Extent,
+                        nameof(ParameterBinderStrings.ParameterAlreadyBound),
+                        ParameterBinderStrings.ParameterAlreadyBound,
+                        errorArg1,
+                        osTypesToken);
+                    return;
+                }
+
+                switch(argumentValue)
+                {
+                    case string osName:
+                        HandleRequiresOSTypesArgument(argumentAst, osName, ref requiredOSTypes);
+                        break;
+
+                    case IEnumerable osNamesEnumerable:
+                        foreach (object osNameArg in osNamesEnumerable)
+                        {
+                            if (osNameArg is string enumeratedOSName)
+                            {
+                                HandleRequiresOSTypesArgument(argumentAst, enumeratedOSName, ref requiredOSTypes);
+                            }
+                            else
+                            {
+                                object paramValidationArg1 = null;
+                                ReportError(parameter.Extent,
+                                    nameof(ParameterBinderStrings.ParameterArgumentValidationError),
+                                    ParameterBinderStrings.ParameterArgumentValidationError,
+                                    paramValidationArg1,
+                                    osTypesToken);
+                                return;
+                            }
+                        }
+                        break;
+
+                    default:
+                        object errorArg1 = null;
+                        ReportError(parameter.Extent,
+                                nameof(ParameterBinderStrings.ParameterArgumentValidationError),
+                                ParameterBinderStrings.ParameterArgumentValidationError,
+                                errorArg1,
+                                osTypesToken);
+                        break;
+                }              
             }
             else if (versionToken.StartsWith(parameter.ParameterName, StringComparison.OrdinalIgnoreCase))
             {
@@ -2149,6 +2229,31 @@ namespace System.Management.Automation.Language
 
                     requiredVersion = version;
                 }
+            }
+            else if (maximumPSVersionToken.StartsWith(parameter.ParameterName, StringComparison.OrdinalIgnoreCase))
+            {
+                var argumentText = argumentValue as string ?? argumentAst.Extent.Text;
+                Version version = Utils.StringToVersion(argumentText);
+                if (version == null)
+                {
+                    ReportError(argumentAst.Extent,
+                        nameof(ParserStrings.RequiresVersionInvalid),
+                        ParserStrings.RequiresVersionInvalid);
+                    return;
+                }
+
+                if (requiredMaximumPSVersion != null && !requiredMaximumPSVersion.Equals(version))
+                {
+                    object errorArg1 = null;
+                    ReportError(parameter.Extent,
+                        nameof(ParameterBinderStrings.ParameterAlreadyBound),
+                        ParameterBinderStrings.ParameterAlreadyBound,
+                        errorArg1,
+                        maximumPSVersionToken);
+                    return;
+                }
+                
+                requiredMaximumPSVersion = version;
             }
             else if (assemblyToken.StartsWith(parameter.ParameterName, StringComparison.OrdinalIgnoreCase))
             {
@@ -2192,7 +2297,9 @@ namespace System.Management.Automation.Language
                     }
 
                     if (requiredModules == null)
+                    {
                         requiredModules = new List<ModuleSpecification>();
+                    }
                     requiredModules.Add(moduleSpecification);
                 }
             }
@@ -2201,6 +2308,20 @@ namespace System.Management.Automation.Language
                 ReportError(parameter.Extent,
                     nameof(DiscoveryExceptions.ScriptRequiresInvalidFormat),
                     DiscoveryExceptions.ScriptRequiresInvalidFormat);
+            }
+        }
+
+        private void HandleRequiresOSTypesArgument(Ast argumentAst, string osType, ref List<string> requiredOSTypes)
+        {
+            if (requiredOSTypes == null)
+            {
+                requiredOSTypes = new List<string>{osType};
+                return;
+            }
+            
+            if (!requiredOSTypes.Contains(osType, StringComparer.OrdinalIgnoreCase))
+            {
+                requiredOSTypes.Add(osType);
             }
         }
 
@@ -4302,6 +4423,7 @@ namespace System.Management.Automation.Language
                         resyncIfMemberAccess = false;
                         SkipChar();
                         ScanBlockComment();
+                        _requiresDeclarationsComplete = true;
                         goto again;
                     }
 
@@ -4309,6 +4431,7 @@ namespace System.Management.Automation.Language
                     break;
 
                 case '[':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.LBracket);
 
                 case '.':
@@ -4320,6 +4443,7 @@ namespace System.Management.Automation.Language
                     // in an attribute and the member access token.
                     if (resyncIfMemberAccess)
                     {
+                        _requiresDeclarationsComplete = true;
                         Resync(resyncPoint);
                     }
                     else
@@ -4612,17 +4736,20 @@ namespace System.Management.Automation.Language
                 case SpecialChars.QuoteSingleRight:
                 case SpecialChars.QuoteSingleBase:
                 case SpecialChars.QuoteReversed:
+                    _requiresDeclarationsComplete = true;
                     return ScanStringLiteral();
 
                 case '"':
                 case SpecialChars.QuoteDoubleLeft:
                 case SpecialChars.QuoteDoubleRight:
                 case SpecialChars.QuoteLowDoubleLeft:
+                    _requiresDeclarationsComplete = true;
                     return ScanStringExpandable();
 
                 case '@':
                     // Could be start of hash literal, array operator, multi-line string, splatted variable
                     c1 = GetChar();
+                    _requiresDeclarationsComplete = true;
                     if (c1 == '{')
                     {
                         return NewToken(TokenKind.AtCurly);
@@ -4667,6 +4794,7 @@ namespace System.Management.Automation.Language
 
                 case '`':
                     c1 = GetChar();
+                    _requiresDeclarationsComplete = true;
                     if (c1 == '\r')
                     {
                         NormalizeCRLF(c1);
@@ -4699,9 +4827,11 @@ namespace System.Management.Automation.Language
                     return ScanGenericToken(c, surrogateCharacter);
 
                 case '=':
+                    _requiresDeclarationsComplete = true;
                     return CheckOperatorInCommandMode(c, TokenKind.Equals);
 
                 case '+':
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if (c1 == '+')
                     {
@@ -4726,6 +4856,7 @@ namespace System.Management.Automation.Language
                 case SpecialChars.EmDash:
                 case SpecialChars.EnDash:
                 case SpecialChars.HorizontalBar:
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if (c1.IsDash())
                     {
@@ -4752,6 +4883,7 @@ namespace System.Management.Automation.Language
                     return CheckOperatorInCommandMode(c, TokenKind.Minus);
 
                 case '*':
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if (c1 == '=')
                     {
@@ -4788,6 +4920,7 @@ namespace System.Management.Automation.Language
                     return CheckOperatorInCommandMode(c, TokenKind.Multiply);
 
                 case '/':
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if (c1 == '=')
                     {
@@ -4798,6 +4931,7 @@ namespace System.Management.Automation.Language
                     return CheckOperatorInCommandMode(c, TokenKind.Divide);
 
                 case '%':
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if (c1 == '=')
                     {
@@ -4808,6 +4942,7 @@ namespace System.Management.Automation.Language
                     return CheckOperatorInCommandMode(c, TokenKind.Rem);
 
                 case '$':
+                    _requiresDeclarationsComplete = true;
                     if (PeekChar() == '(')
                     {
                         SkipChar();
@@ -4817,6 +4952,7 @@ namespace System.Management.Automation.Language
                     return ScanVariable(false, false);
 
                 case '<':
+                    _requiresDeclarationsComplete = true;
                     if (PeekChar() == '#')
                     {
                         SkipChar();
@@ -4827,6 +4963,7 @@ namespace System.Management.Automation.Language
                     return NewInputRedirectionToken();
 
                 case '>':
+                    _requiresDeclarationsComplete = true;
                     if (PeekChar() == '>')
                     {
                         SkipChar();
@@ -4888,13 +5025,17 @@ namespace System.Management.Automation.Language
                 case 'Y':
                 case 'Z':
                 case '_':
+                    _requiresDeclarationsComplete = true;
                     return ScanIdentifier(c);
 
                 case '(':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.LParen);
                 case ')':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.RParen);
                 case '[':
+                    _requiresDeclarationsComplete = true;
                     if (InCommandMode() && !PeekChar().ForceStartNewToken())
                     {
                         return ScanGenericToken('[');
@@ -4902,22 +5043,28 @@ namespace System.Management.Automation.Language
 
                     return NewToken(TokenKind.LBracket);
                 case ']':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.RBracket);
                 case '{':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.LCurly);
                 case '}':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.RCurly);
                 case '.':
+                    _requiresDeclarationsComplete = true;
                     return ScanDot();
                 case ';':
                     return NewToken(TokenKind.Semi);
                 case ',':
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.Comma);
 
                 case '0':
                 case '7':
                 case '8':
                 case '9':
+                    _requiresDeclarationsComplete = true;
                     return ScanNumber(c);
 
                 case '1':
@@ -4926,6 +5073,7 @@ namespace System.Management.Automation.Language
                 case '4':
                 case '5':
                 case '6':
+                    _requiresDeclarationsComplete = true;
                     if (PeekChar() == '>')
                     {
                         SkipChar();
@@ -4960,7 +5108,7 @@ namespace System.Management.Automation.Language
                         SkipChar();
                         return NewToken(TokenKind.AndAnd);
                     }
-
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.Ampersand);
 
                 case '|':
@@ -4969,10 +5117,11 @@ namespace System.Management.Automation.Language
                         SkipChar();
                         return NewToken(TokenKind.OrOr);
                     }
-
+                    _requiresDeclarationsComplete = true;
                     return NewToken(TokenKind.Pipe);
 
                 case '!':
+                    _requiresDeclarationsComplete = true;
                     c1 = PeekChar();
                     if ((InCommandMode() && !c1.ForceStartNewToken()) ||
                         (InExpressionMode() && c1.IsIdentifierStart()))
@@ -4994,6 +5143,7 @@ namespace System.Management.Automation.Language
                     return NewToken(TokenKind.Exclaim);
 
                 case ':':
+                    _requiresDeclarationsComplete = true;
                     if (PeekChar() == ':')
                     {
                         SkipChar();
@@ -5015,6 +5165,7 @@ namespace System.Management.Automation.Language
                     return this.NewToken(TokenKind.Colon);
 
                 case '?' when InExpressionMode():
+                    _requiresDeclarationsComplete = true;
                     if (ExperimentalFeature.IsEnabled("PSCoalescingOperators"))
                     {
                         c1 = PeekChar();
@@ -5041,7 +5192,6 @@ namespace System.Management.Automation.Language
                     {
                         return SaveToken(new Token(NewScriptExtent(_tokenStart + 1, _tokenStart + 1), TokenKind.EndOfInput, TokenFlags.None));
                     }
-
                     return ScanGenericToken(c);
 
                 default:

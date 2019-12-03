@@ -751,6 +751,20 @@ namespace System.Management.Automation.Language
         /// If nothing is specified, this property is false.
         /// </summary>
         public bool IsElevationRequired { get; internal set; }
+
+        /// <summary>
+        /// Gets the required specific OS types, specified like:
+        ///     <code>#requires -OS OSVersion</code>
+        ///     <code>#requires -OS "OSVersion1,OSVersion2,OSVersion3"</code>
+        /// </summary>
+        public ReadOnlyCollection<string> RequiredOSTypes { get; internal set; }
+
+        /// <summary>
+        /// Gets the PowerShell maximum version this script requires, specified like:
+        ///     <code>#requires -MaximumPSVersion 3</code>
+        /// If no version has been specified, this property is null.
+        /// </summary>
+        public Version RequiredMaximumPSVersion { get; internal set; }
     }
 
     /// <summary>

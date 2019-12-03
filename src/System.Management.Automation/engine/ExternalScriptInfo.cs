@@ -421,6 +421,8 @@ namespace System.Management.Automation
             }
         }
 
+        internal Version RequiresMaximumPSVersion => GetRequiresData()?.RequiredMaximumPSVersion;
+
         internal IEnumerable<string> RequiresPSEditions
         {
             get
@@ -447,6 +449,7 @@ namespace System.Management.Automation
                 return data == null ? false : data.IsElevationRequired;
             }
         }
+        internal IEnumerable<string> RequiredOSTypes => GetRequiresData()?.RequiredOSTypes;
 
         internal uint PSVersionLineNumber
         {

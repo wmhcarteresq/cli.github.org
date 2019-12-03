@@ -595,6 +595,49 @@ namespace System.Management.Automation
         }
 
         /// <summary>
+        /// Checks whether the user's OS type is in a list of required types.
+        /// </summary>
+        /// <param name="requiredOSTypes">A list of required types.</param>
+        /// <returns>True if the user's OS type is in the list of required types, false otherwise.</returns>
+        internal static bool IsOSTypeValid(IEnumerable<string> requiredOSTypes)
+        {
+            string currentOSName = GetOSTypeString();
+            foreach (string requiredOSType in requiredOSTypes) 
+            {
+                if (requiredOSType.Equals(currentOSName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gets a string representation of the user's current OS version or null if unknown version.
+        /// </summary>
+        /// <returns>The string representation of the user's OS.</returns>
+        internal static string GetOSTypeString()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) 
+            {
+                return "MacOS"; 
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return "Linux"; 
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return "Windows";
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Coverts a string to version format.
         /// If the string is of the format x (ie., no dots), then ".0" is appended
         /// to the string.
@@ -2068,6 +2111,9 @@ namespace System.Management.Automation.Internal
 
         internal static bool ShowMarkdownOutputBypass;
 
+        internal static int RequiresWarningCount = 0;
+        internal static bool SilenceRequiresWarning = false;
+
         /// <summary>This member is used for internal test purposes.</summary>
         public static void SetTestHook(string property, object value)
         {
@@ -2076,6 +2122,13 @@ namespace System.Management.Automation.Internal
             {
                 fieldInfo.SetValue(null, value);
             }
+        }
+
+        /// <summary>This member is used for internal test purposes.</summary>
+        public static object GetTestHookValue(string field)
+        {
+            var fieldInfo = typeof(InternalTestHooks).GetField(field, BindingFlags.Static | BindingFlags.NonPublic);
+            return fieldInfo.GetValue(null);
         }
 
         /// <summary>

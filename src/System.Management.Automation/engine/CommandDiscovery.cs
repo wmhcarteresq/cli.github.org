@@ -409,17 +409,71 @@ namespace System.Management.Automation
             }
         }
 
-        // This method verifies the following 3 elements of #Requires statement
+        // This method verifies the following 6 elements of #Requires statement
         // #Requires -RunAsAdministrator
         // #Requires -PSVersion
+        // #Requires -MaximumPSVersion
         // #Requires -PSEdition
         // #Requires -Module
+        // #Requires -OS
         internal static void VerifyScriptRequirements(ExternalScriptInfo scriptInfo, ExecutionContext context)
         {
             VerifyElevatedPrivileges(scriptInfo);
             VerifyPSVersion(scriptInfo);
+            VerifyMaximumPSVersion(scriptInfo);
             VerifyPSEdition(scriptInfo);
             VerifyRequiredModules(scriptInfo, context);
+            VerifyOSTypes(scriptInfo);
+        }
+
+        internal static void VerifyMaximumPSVersion(ExternalScriptInfo scriptInfo)
+        {
+            Version requiresMaximumPSVersion = scriptInfo.RequiresMaximumPSVersion;
+            // check if a maximum PS version is specified
+            if (requiresMaximumPSVersion == null)
+            {
+                return;
+            }
+
+
+            // check if the maximum version is a legit PS version.
+            if (!Utils.IsPSVersionSupported(requiresMaximumPSVersion))
+            {
+                    throw new ScriptRequiresException(
+                        scriptInfo.Name,
+                        requiresMaximumPSVersion,
+                        PSVersionInfo.PSVersion.ToString(),
+                        "ScriptRequiresUnmatchedPSVersion");
+            }
+
+            if (requiresMaximumPSVersion < PSVersionInfo.PSVersion)
+            {
+                ScriptRequiresException scriptRequiresException =
+                    new ScriptRequiresException(
+                        scriptInfo.Name,
+                        requiresMaximumPSVersion,
+                        PSVersionInfo.PSVersion.ToString(),
+                        "ScriptRequiresMaximumPSVersion");
+                throw scriptRequiresException;
+            }
+        }
+
+        internal static void VerifyOSTypes(ExternalScriptInfo scriptInfo)
+        {
+            if (scriptInfo.RequiredOSTypes == null || 
+                !scriptInfo.RequiredOSTypes.Any() ||
+                Utils.IsOSTypeValid(scriptInfo.RequiredOSTypes))
+            {
+                return;
+            }
+
+            ScriptRequiresException scriptRequiresException =
+                new ScriptRequiresException(
+                    scriptInfo.Name,
+                    Utils.GetOSTypeString(),
+                    scriptInfo.RequiredOSTypes,
+                    "ScriptRequiresOSTypeInvalid");
+            throw scriptRequiresException;
         }
 
         internal static void VerifyPSVersion(ExternalScriptInfo scriptInfo)

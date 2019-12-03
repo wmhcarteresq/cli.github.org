@@ -90,6 +90,105 @@ Describe "Requires tests" -Tags "CI" {
             { . $File } | Should -Throw -ExceptionType ([System.Management.Automation.ScriptRequiresException])
         }
     }
+
+    Context "Maxmimum PS Version checks" {
+        BeforeAll {
+            $currentVersion = $PSVersionTable.PSVersion
+        }
+        It "Both current major and minor versions equals required maximum version." {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -MaximumPSVersion $($currentVersion.Major).$($currentVersion.Minor).$($currentVersion.Patch)" -Force
+            { & $scriptPath } | Should -Not -Throw
+        }
+        if ($currentVersion.Minor -gt 0) {
+            It "Current major version equals required maximum major version, and current minor version < required minor version." {
+                $scriptPath = Join-Path $TestDrive 'script.ps1'
+                $script = "#requires -MaximumPSVersion $($currentVersion.Major).0"
+                $null = New-Item -Path $scriptPath -Value $script -Force
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            }
+        }
+        It "Current major version is greater than maximum major version" {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -MaximumPSVersion $($currentVersion.Major - 1)" -Force
+            { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+        }
+
+        It "Versions specified as bareword strings" {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -MaximumPSVersion 6" -Force
+            if ($currentVersion.Major -gt 6) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } elseif ($currentVersion.Major -eq 6 -and $currentVersion.Minor -gt 0) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } else {
+                { & $scriptPath } | Should -Not -Throw
+            }
+        }
+
+        It "Versions specified as bareword strings" {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -MaximumPSVersion 6.2" -Force
+            if ($currentVersion.Major -gt 6) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } elseif ($currentVersion.Major -eq 6 -and $currentVersion.Minor -gt 2) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } else {
+                { & $scriptPath } | Should -Not -Throw
+            }
+        }
+
+        It "Versions specified as bareword strings" {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -MaximumPSVersion 6.2.3" -Force
+            if ($currentVersion.Major -gt 6) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } elseif ($currentVersion.Major -eq 6 -and $currentVersion.Minor -gt 2) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } elseif ($currentVersion.Major -eq 6 -and $currentVersion.Minor -eq 2 -and $currentVersion.Patch -gt 3) {
+                { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresMaximumPSVersion"
+            } else {
+                { & $scriptPath } | Should -Not -Throw
+            }
+        }
+
+    }
+
+    Context "OS type checks" {
+        It "OS type is in the supported OS types." {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -OS Linux,MacOS,Windows" -Force
+            { & $scriptPath } | Should -Not -Throw
+        }
+
+        It "OS type is not in the supported OS types." {
+            [System.Collections.ArrayList] $OSTypes = "Linux","MacOS","Windows"
+            if ($IsMacOS) {
+                $OSTypes.Remove("MacOS")
+            } elseif ($IsLinux) {
+                $OSTypes.Remove("Linux")
+            } else {
+                $OSTypes.Remove("Windows")
+            }
+            $requiredOSTypes = $OSTypes -join ','
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -OS $($requiredOSTypes)" -Force
+            { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresOSTypeInvalid"
+        }
+
+        It "OS type is not a valid OS type." {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $null = New-Item -Path $scriptPath -Value "#requires -OS NonExistantOS" -Force
+            { & $scriptPath } | Should -Throw -ErrorId "ScriptRequiresOSTypeInvalid"
+        }
+
+        It "OS type is not a string." {
+            $scriptPath = Join-Path $TestDrive 'script.ps1'
+            $requiredOSTypes = 1
+            $null = New-Item -Path $scriptPath -Value "#requires -OS $($requiredOSTypes)" -Force
+            { & $scriptPath } | Should -Throw -ErrorId "System.FormatException"
+        }
+    }
 }
 
 Describe "#requires -Modules" -Tags "CI" {
@@ -210,5 +309,80 @@ Describe "#requires -Modules" -Tags "CI" {
 
             & $scriptPath | Should -BeExactly $success
         }
+    }
+}
+
+Describe "#requires warning emitting" -Tags "CI" {
+    BeforeAll {
+        [system.management.automation.internal.internaltesthooks]::SetTestHook('SilenceRequiresWarning', $true)
+    }
+
+    BeforeEach {
+        [system.management.automation.internal.internaltesthooks]::SetTestHook('RequiresWarningCount', 0)
+    }
+
+    AfterEach {
+        [system.management.automation.internal.internaltesthooks]::SetTestHook('RequiresWarningCount', 0)
+    }
+
+    AfterAll {
+        [system.management.automation.internal.internaltesthooks]::SetTestHook('SilenceRequiresWarning', $false)
+    }
+
+    It "Emits no warning with no requires statement" {
+        $tokens = $errors = $null
+        $Statement = "`$foo = 1"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 0
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits no warning with one requires statement" {
+        $tokens = $errors = $null
+        $Statement = "#requires -OS Windows,MacOS,Linux"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 0
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits no warning with many requires statement" {
+        $tokens = $errors = $null
+        $currentVersion = $PSVersionTable.PSVersion
+        $Statement = "#requires -OS Windows,MacOS,Linux`r`n#requires -Version 1.0`r`n#requires -MaximumPSVersion $($currentVersion.Major).$($currentVersion.Minor).$($currentVersion.Patch)"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 0
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits no warning when requires have blank lines between them as long as no other statements have been parsed" {
+        $tokens = $errors = $null
+        $Statement = "#requires -OS Windows,MacOS,Linux`r`n`r`n#requires -Version 1.0`r`n`$foo = 1"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 0
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits no warning when requires are at the top of the script but blank lines precede them" {
+        $tokens = $errors = $null
+        $Statement = "`r`n`r`n#requires -OS Windows,MacOS,Linux`r`n#requires -Version 1.0"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 0
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits a warning when a requires come after statements" {
+        $tokens = $errors = $null
+        $Statement = "`$foo = 1; #requires -OS Windows,MacOS,Linux"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 1
+        $errors.Count | Should -BeExactly 0
+    }
+
+    It "Emits multiple warnings with different lines when multiple requires come after statements" {
+        $tokens = $errors = $null
+        $Statement = "`$foo = 1`r`n#requires -OS Windows,MacOS,Linux`r`n#requires -Version 1.0"
+        [System.Management.Automation.Language.Parser]::ParseInput($Statement, [ref]$tokens, [ref]$errors)
+        [system.management.automation.internal.internaltesthooks]::GetTestHookValue("RequiresWarningCount") | Should -BeExactly 2
+        $errors.Count | Should -BeExactly 0
     }
 }

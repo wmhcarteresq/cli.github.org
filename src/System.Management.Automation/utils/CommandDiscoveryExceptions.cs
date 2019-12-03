@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Management.Automation.Internal;
 using System.Runtime.Serialization;
@@ -313,8 +313,39 @@ namespace System.Management.Automation
             this.SetErrorCategory(ErrorCategory.ResourceUnavailable);
         }
 
+         /// <summary>
+        /// Initializes a new instance of the ScriptRequiresException class. Recommended constructor for the class for
+        /// #requires -OS statement.
+        /// </summary>
+        /// <param name="commandName">
+        /// The name of the script containing the #requires statement.
+        /// </param>
+        /// <param name="currentOSType">
+        /// The users's current OS version.
+        /// </param>
+        /// <param name="requiredOSTypes">
+        /// The list of required OS versions.
+        /// </param>
+        /// <param name="errorId">
+        /// The error id for this exception.
+        /// </param>
+        internal ScriptRequiresException(
+            string commandName,
+            string currentOSType,
+            IEnumerable<string> requiredOSTypes,
+            string errorId)
+            : base(BuildMessage(commandName, requiredOSTypes, currentOSType))
+        {
+            Diagnostics.Assert(!string.IsNullOrEmpty(commandName), "commandName is null or empty when constructing ScriptRequiresException");
+            Diagnostics.Assert(!string.IsNullOrEmpty(errorId), "errorId is null or empty when constructing ScriptRequiresException");
+            _commandName = commandName;
+            this.SetErrorId(errorId);
+            this.SetTargetObject(commandName);
+            this.SetErrorCategory(ErrorCategory.InvalidArgument);
+        }
+
         /// <summary>
-        /// Constructs an ScriptRequiresException. Recommended constructor for the class for
+        /// Initializes a new instance of the ScriptRequiresException class. Recommended constructor for the class for
         /// #requires -RunAsAdministrator statement.
         /// </summary>
         /// <param name="commandName">
@@ -379,6 +410,7 @@ namespace System.Management.Automation
             _missingPSSnapIns = (ReadOnlyCollection<string>)info.GetValue("MissingPSSnapIns", typeof(ReadOnlyCollection<string>));
             _requiresShellId = info.GetString("RequiresShellId");
             _requiresShellPath = info.GetString("RequiresShellPath");
+            _requiresOSVersions = info.GetString("RequiresOSVersions");
         }
         /// <summary>
         /// Gets the serialized data for the exception.
@@ -403,6 +435,7 @@ namespace System.Management.Automation
             info.AddValue("MissingPSSnapIns", _missingPSSnapIns, typeof(ReadOnlyCollection<string>));
             info.AddValue("RequiresShellId", _requiresShellId);
             info.AddValue("RequiresShellPath", _requiresShellPath);
+            info.AddValue("RequiresOSVersions", _requiresOSVersions);
         }
         #endregion Serialization
 
@@ -447,6 +480,16 @@ namespace System.Management.Automation
         }
 
         private string _requiresShellId;
+
+        /// <summary>
+        /// Gets the OS type.
+        /// </summary>
+        public string RequiresOSVersions
+        {
+            get { return _requiresOSVersions; }
+        }
+
+        private string _requiresOSVersions;
 
         /// <summary>
         /// Gets or sets the path to the incompatible shell.
@@ -526,6 +569,11 @@ namespace System.Management.Automation
             }
 
             return StringUtil.Format(resourceStr, commandName, first, second);
+        }
+
+        private static string BuildMessage(string commandName, IEnumerable<string> requiredOSTypes, string currentOSType)
+        {
+            return StringUtil.Format(DiscoveryExceptions.RequiresOSTypeInvalid, commandName, currentOSType, string.Join(",", requiredOSTypes));
         }
 
         private static string BuildMessage(string commandName)
