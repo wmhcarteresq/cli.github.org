@@ -227,31 +227,24 @@ namespace System.Management.Automation
                 }
             }
 
+            // If addAmpersandIfNecessary indicates we need to check for non-expandable syntax, and command isn't quoted,
+            // we'll need an ampersand if command requires quotes for non-expandable syntax.
+            bool needAmpersand = addAmpersandIfNecessary && string.IsNullOrEmpty(quote) &&
+                CodeGeneration.CmdRequiresQuote(name);
+
+            // Prepare the quote character to use (or null if not needing quoting), if not previously quoted, if either needing
+            // an ampersand or adding an ampersand is not permitted, and the command requires quotes for expandable syntax application, 
+            // use a single quote, else keep it bareword, else use the previously supplied quote.
+            char quoteToUse = string.IsNullOrEmpty(quote)
+                ? ((needAmpersand || !addAmpersandIfNecessary) && CodeGeneration.CmdRequiresQuote(name,true) ? '\'' : (char)0)
+                : quote[0];
+
+            if (quoteToUse != (char)0){
+                name = quoteToUse + (quoteToUse.IsDoubleQuote() ? CodeGeneration.EscapeDoubleQuotedStringContent(name) :
+                    CodeGeneration.EscapeSingleQuotedStringContent(name)) + quoteToUse;
+            }
+
             syntax = string.IsNullOrEmpty(syntax) ? name : syntax;
-            bool needAmpersand;
-
-            if (CompletionRequiresQuotes(name, false))
-            {
-                needAmpersand = quote == string.Empty && addAmpersandIfNecessary;
-                string quoteInUse = quote == string.Empty ? "'" : quote;
-                if (quoteInUse == "'")
-                {
-                    name = name.Replace("'", "''");
-                }
-                else
-                {
-                    name = name.Replace("`", "``");
-                    name = name.Replace("$", "`$");
-                }
-
-                name = quoteInUse + name + quoteInUse;
-            }
-            else
-            {
-                needAmpersand = quote == string.Empty && addAmpersandIfNecessary &&
-                                Tokenizer.IsKeyword(name) && !s_keywordsToExcludeFromAddingAmpersand.Contains(name);
-                name = quote + name + quote;
-            }
 
             // It's useless to call ForEach-Object (foreach) as the first command of a pipeline. For example:
             //     PS C:\> fore<tab>  --->   PS C:\> foreach   (expected, use as the keyword)
@@ -451,23 +444,11 @@ namespace System.Management.Automation
             {
                 foreach (dynamic moduleInfo in psObjects)
                 {
-                    var completionText = moduleInfo.Name.ToString();
-                    var listItemText = completionText;
+                    var listItemText = moduleInfo.Name.ToString();
+                    var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
                     var toolTip = "Description: " + moduleInfo.Description.ToString() + "\r\nModuleType: "
                                   + moduleInfo.ModuleType.ToString() + "\r\nPath: "
                                   + moduleInfo.Path.ToString();
-
-                    if (CompletionRequiresQuotes(completionText, false))
-                    {
-                        var quoteInUse = quote == string.Empty ? "'" : quote;
-                        if (quoteInUse == "'")
-                            completionText = completionText.Replace("'", "''");
-                        completionText = quoteInUse + completionText + quoteInUse;
-                    }
-                    else
-                    {
-                        completionText = quote + completionText + quote;
-                    }
 
                     result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, toolTip));
                 }
@@ -1699,7 +1680,7 @@ namespace System.Management.Automation
                 {
                     if (wordToComplete.Equals(value, StringComparison.OrdinalIgnoreCase))
                     {
-                        string completionText = quote == string.Empty ? value : quote + value + quote;
+                        string completionText = CodeGeneration.QuoteArgument(value, quote);
                         fullMatch = new CompletionResult(completionText, value, CompletionResultType.ParameterValue, value);
                         continue;
                     }
@@ -1717,7 +1698,7 @@ namespace System.Management.Automation
 
                 enumList.Sort();
                 result.AddRange(from entry in enumList
-                                let completionText = quote == string.Empty ? entry : quote + entry + quote
+                                let completionText = CodeGeneration.QuoteArgument(entry, quote)
                                 select new CompletionResult(completionText, entry, CompletionResultType.ParameterValue, entry));
 
                 result.Add(CompletionResult.Null);
@@ -1756,7 +1737,7 @@ namespace System.Management.Automation
 
                         if (wordToComplete.Equals(value, StringComparison.OrdinalIgnoreCase))
                         {
-                            string completionText = quote == string.Empty ? value : quote + value + quote;
+                            string completionText = CodeGeneration.QuoteArgument(value, quote);
                             fullMatch = new CompletionResult(completionText, value, CompletionResultType.ParameterValue, value);
                             continue;
                         }
@@ -1776,24 +1757,7 @@ namespace System.Management.Automation
                     foreach (string entry in setList)
                     {
                         string realEntry = entry;
-                        string completionText = entry;
-                        if (quote == string.Empty)
-                        {
-                            if (CompletionRequiresQuotes(entry, false))
-                            {
-                                realEntry = CodeGeneration.EscapeSingleQuotedStringContent(entry);
-                                completionText = "'" + realEntry + "'";
-                            }
-                        }
-                        else
-                        {
-                            if (quote.Equals("'", StringComparison.OrdinalIgnoreCase))
-                            {
-                                realEntry = CodeGeneration.EscapeSingleQuotedStringContent(entry);
-                            }
-
-                            completionText = quote + realEntry + quote;
-                        }
+                        string completionText = CodeGeneration.QuoteArgument(entry, quote);
 
                         result.Add(new CompletionResult(completionText, entry, CompletionResultType.ParameterValue, entry));
                     }
@@ -2939,20 +2903,8 @@ namespace System.Management.Automation
                 {
                     foreach (dynamic eventLog in psObjects)
                     {
-                        var completionText = eventLog.Log.ToString();
-                        var listItemText = completionText;
-
-                        if (CompletionRequiresQuotes(completionText, false))
-                        {
-                            var quoteInUse = quote == string.Empty ? "'" : quote;
-                            if (quoteInUse == "'")
-                                completionText = completionText.Replace("'", "''");
-                            completionText = quoteInUse + completionText + quoteInUse;
-                        }
-                        else
-                        {
-                            completionText = quote + completionText + quote;
-                        }
+                        var listItemText = eventLog.Log.ToString();
+                        var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                         if (pattern.IsMatch(listItemText))
                         {
@@ -3030,20 +2982,8 @@ namespace System.Management.Automation
 
                 foreach (dynamic psJob in psObjects)
                 {
-                    var completionText = psJob.Name;
-                    var listItemText = completionText;
-
-                    if (CompletionRequiresQuotes(completionText, false))
-                    {
-                        var quoteInUse = quote == string.Empty ? "'" : quote;
-                        if (quoteInUse == "'")
-                            completionText = completionText.Replace("'", "''");
-                        completionText = quoteInUse + completionText + quoteInUse;
-                    }
-                    else
-                    {
-                        completionText = quote + completionText + quote;
-                    }
+                    var listItemText = psJob.Name;
+                    var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                     result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                 }
@@ -3105,20 +3045,8 @@ namespace System.Management.Automation
 
                 foreach (dynamic psJob in psObjects)
                 {
-                    var completionText = psJob.Name;
-                    var listItemText = completionText;
-
-                    if (CompletionRequiresQuotes(completionText, false))
-                    {
-                        var quoteInUse = quote == string.Empty ? "'" : quote;
-                        if (quoteInUse == "'")
-                            completionText = completionText.Replace("'", "''");
-                        completionText = quoteInUse + completionText + quoteInUse;
-                    }
-                    else
-                    {
-                        completionText = quote + completionText + quote;
-                    }
+                    var listItemText = psJob.Name;
+                    var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                     result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                 }
@@ -3241,31 +3169,15 @@ namespace System.Management.Automation
                 var uniqueSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (dynamic process in psObjects)
                 {
-                    var completionText = process.Name;
-                    var listItemText = completionText;
-
-                    if (uniqueSet.Contains(completionText))
-                        continue;
-
-                    uniqueSet.Add(completionText);
-                    if (CompletionRequiresQuotes(completionText, false))
-                    {
-                        var quoteInUse = quote == string.Empty ? "'" : quote;
-                        if (quoteInUse == "'")
-                            completionText = completionText.Replace("'", "''");
-                        completionText = quoteInUse + completionText + quoteInUse;
-                    }
-                    else
-                    {
-                        completionText = quote + completionText + quote;
-                    }
+                    var listItemText = process.Name;
 
                     // on macOS, system processes names will be empty if PowerShell isn't run as `sudo`
-                    if (string.IsNullOrEmpty(listItemText))
-                    {
+                    if (string.IsNullOrEmpty(listItemText) || uniqueSet.Contains(listItemText))
                         continue;
-                    }
 
+                    uniqueSet.Add(listItemText);
+
+                    var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
                     result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                 }
 
@@ -3298,20 +3210,8 @@ namespace System.Management.Automation
 
             foreach (dynamic providerInfo in psObjects)
             {
-                var completionText = providerInfo.Name;
-                var listItemText = completionText;
-
-                if (CompletionRequiresQuotes(completionText, false))
-                {
-                    var quoteInUse = quote == string.Empty ? "'" : quote;
-                    if (quoteInUse == "'")
-                        completionText = completionText.Replace("'", "''");
-                    completionText = quoteInUse + completionText + quoteInUse;
-                }
-                else
-                {
-                    completionText = quote + completionText + quote;
-                }
+                var listItemText = providerInfo.Name;
+                var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                 result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
             }
@@ -3346,20 +3246,8 @@ namespace System.Management.Automation
             {
                 foreach (dynamic driveInfo in psObjects)
                 {
-                    var completionText = driveInfo.Name;
-                    var listItemText = completionText;
-
-                    if (CompletionRequiresQuotes(completionText, false))
-                    {
-                        var quoteInUse = quote == string.Empty ? "'" : quote;
-                        if (quoteInUse == "'")
-                            completionText = completionText.Replace("'", "''");
-                        completionText = quoteInUse + completionText + quoteInUse;
-                    }
-                    else
-                    {
-                        completionText = quote + completionText + quote;
-                    }
+                    var listItemText = driveInfo.Name;
+                    var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                     result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                 }
@@ -3397,20 +3285,8 @@ namespace System.Management.Automation
                 {
                     foreach (dynamic serviceInfo in psObjects)
                     {
-                        var completionText = serviceInfo.DisplayName;
-                        var listItemText = completionText;
-
-                        if (CompletionRequiresQuotes(completionText, false))
-                        {
-                            var quoteInUse = quote == string.Empty ? "'" : quote;
-                            if (quoteInUse == "'")
-                                completionText = completionText.Replace("'", "''");
-                            completionText = quoteInUse + completionText + quoteInUse;
-                        }
-                        else
-                        {
-                            completionText = quote + completionText + quote;
-                        }
+                        var listItemText = serviceInfo.DisplayName;
+                        var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                         result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                     }
@@ -3428,20 +3304,8 @@ namespace System.Management.Automation
                 {
                     foreach (dynamic serviceInfo in psObjects)
                     {
-                        var completionText = serviceInfo.Name;
-                        var listItemText = completionText;
-
-                        if (CompletionRequiresQuotes(completionText, false))
-                        {
-                            var quoteInUse = quote == string.Empty ? "'" : quote;
-                            if (quoteInUse == "'")
-                                completionText = completionText.Replace("'", "''");
-                            completionText = quoteInUse + completionText + quoteInUse;
-                        }
-                        else
-                        {
-                            completionText = quote + completionText + quote;
-                        }
+                        var listItemText = serviceInfo.Name;
+                        var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                         result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                     }
@@ -3475,29 +3339,8 @@ namespace System.Management.Automation
 
             foreach (dynamic variable in psObjects)
             {
-                var effectiveQuote = quote;
-                var completionText = variable.Name;
-                var listItemText = completionText;
-
-                // Handle special characters ? and * in variable names
-                if (completionText.IndexOfAny(Utils.Separators.StarOrQuestion) != -1)
-                {
-                    effectiveQuote = "'";
-                    completionText = completionText.Replace("?", "`?");
-                    completionText = completionText.Replace("*", "`*");
-                }
-
-                if (!completionText.Equals("$", StringComparison.Ordinal) && CompletionRequiresQuotes(completionText, false))
-                {
-                    var quoteInUse = effectiveQuote == string.Empty ? "'" : effectiveQuote;
-                    if (quoteInUse == "'")
-                        completionText = completionText.Replace("'", "''");
-                    completionText = quoteInUse + completionText + quoteInUse;
-                }
-                else
-                {
-                    completionText = effectiveQuote + completionText + effectiveQuote;
-                }
+                var listItemText = variable.Name;
+                var completionText = CodeGeneration.QuoteArgument(listItemText, quote, false);
 
                 result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
             }
@@ -3534,20 +3377,8 @@ namespace System.Management.Automation
                 {
                     foreach (dynamic aliasInfo in psObjects)
                     {
-                        var completionText = aliasInfo.Name;
-                        var listItemText = completionText;
-
-                        if (CompletionRequiresQuotes(completionText, false))
-                        {
-                            var quoteInUse = quote == string.Empty ? "'" : quote;
-                            if (quoteInUse == "'")
-                                completionText = completionText.Replace("'", "''");
-                            completionText = quoteInUse + completionText + quoteInUse;
-                        }
-                        else
-                        {
-                            completionText = quote + completionText + quote;
-                        }
+                        var listItemText = aliasInfo.Name;
+                        var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                         result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
                     }
@@ -3597,20 +3428,8 @@ namespace System.Management.Automation
 
             foreach (dynamic trace in psObjects)
             {
-                var completionText = trace.Name;
-                var listItemText = completionText;
-
-                if (CompletionRequiresQuotes(completionText, false))
-                {
-                    var quoteInUse = quote == string.Empty ? "'" : quote;
-                    if (quoteInUse == "'")
-                        completionText = completionText.Replace("'", "''");
-                    completionText = quoteInUse + completionText + quoteInUse;
-                }
-                else
-                {
-                    completionText = quote + completionText + quote;
-                }
+                var listItemText = trace.Name;
+                var completionText = CodeGeneration.QuoteArgument(listItemText, quote);
 
                 result.Add(new CompletionResult(completionText, listItemText, CompletionResultType.ParameterValue, listItemText));
             }
@@ -4117,15 +3936,26 @@ namespace System.Management.Automation
 
         internal static IEnumerable<CompletionResult> CompleteFilename(CompletionContext context)
         {
-            return CompleteFilename(context, containerOnly: false, extension: null);
+            return CompleteFilename(context, containerOnly: false, extension: null, asCommand: false);
+        }
+
+        internal static IEnumerable<CompletionResult> CompleteFilename(CompletionContext context, bool asCommand)
+        {
+            return CompleteFilename(context, containerOnly: false, extension: null, asCommand: asCommand);
+        }
+
+        internal static IEnumerable<CompletionResult> CompleteFilename(CompletionContext context, bool containerOnly, HashSet<string> extension)
+        {
+            return CompleteFilename(context, containerOnly: containerOnly, extension: extension, asCommand: false);
         }
 
         [SuppressMessage("Microsoft.Naming", "CA1702:CompoundWordsShouldBeCasedCorrectly")]
-        internal static IEnumerable<CompletionResult> CompleteFilename(CompletionContext context, bool containerOnly, HashSet<string> extension)
+        internal static IEnumerable<CompletionResult> CompleteFilename(CompletionContext context, bool containerOnly, HashSet<string> extension, bool asCommand)
         {
             var wordToComplete = context.WordToComplete;
             var quote = HandleDoubleAndSingleQuote(ref wordToComplete);
             var results = new List<CompletionResult>();
+            var useLiteralPath = context.GetOption("LiteralPaths", @default: false);
 
             // First, try to match \\server\share
             var shareMatch = Regex.Match(wordToComplete, "^\\\\\\\\([^\\\\]+)\\\\([^\\\\]*)$");
@@ -4141,12 +3971,9 @@ namespace System.Management.Automation
                     if (sharePattern.IsMatch(share))
                     {
                         string shareFullPath = "\\\\" + server + "\\" + share;
-                        if (quote != string.Empty)
-                        {
-                            shareFullPath = quote + shareFullPath + quote;
-                        }
+                        string completionText = asCommand ? shareFullPath : CodeGeneration.QuoteArgument(shareFullPath, quote, useLiteralPath);
 
-                        results.Add(new CompletionResult(shareFullPath, shareFullPath, CompletionResultType.ProviderContainer, shareFullPath));
+                        results.Add(new CompletionResult(completionText, share, CompletionResultType.ProviderContainer, shareFullPath));
                     }
                 }
             }
@@ -4160,7 +3987,6 @@ namespace System.Management.Automation
                                           !Regex.Match(wordToComplete, @"^~[\\/]+.*").Success &&
                                           !executionContext.LocationGlobber.IsAbsolutePath(wordToComplete, out _));
                 var relativePaths = context.GetOption("RelativePaths", @default: defaultRelative);
-                var useLiteralPath = context.GetOption("LiteralPaths", @default: false);
 
                 if (useLiteralPath && LocationGlobber.StringContainsGlobCharacters(wordToComplete))
                 {
@@ -4394,41 +4220,7 @@ namespace System.Management.Automation
                             completionText = completionText.Substring(index + 2);
                         }
 
-                        if (CompletionRequiresQuotes(completionText, !useLiteralPath))
-                        {
-                            var quoteInUse = quote == string.Empty ? "'" : quote;
-                            if (quoteInUse == "'")
-                            {
-                                completionText = completionText.Replace("'", "''");
-                            }
-                            else
-                            {
-                                // When double quote is in use, we have to escape the backtip and '$' even when using literal path
-                                //   Get-Content -LiteralPath ".\a``g.txt"
-                                completionText = completionText.Replace("`", "``");
-                                completionText = completionText.Replace("$", "`$");
-                            }
-
-                            if (!useLiteralPath)
-                            {
-                                if (quoteInUse == "'")
-                                {
-                                    completionText = completionText.Replace("[", "`[");
-                                    completionText = completionText.Replace("]", "`]");
-                                }
-                                else
-                                {
-                                    completionText = completionText.Replace("[", "``[");
-                                    completionText = completionText.Replace("]", "``]");
-                                }
-                            }
-
-                            completionText = quoteInUse + completionText + quoteInUse;
-                        }
-                        else if (quote != string.Empty)
-                        {
-                            completionText = quote + completionText + quote;
-                        }
+                        completionText = asCommand ? completionText : CodeGeneration.QuoteArgument(completionText, quote, useLiteralPath);
 
                         if (isFileSystem)
                         {
@@ -4580,9 +4372,6 @@ namespace System.Management.Automation
         }
 
         private static readonly string[] s_variableScopes = new string[] { "Global:", "Local:", "Script:", "Private:" };
-        private static readonly char[] s_charactersRequiringQuotes = new char[] {
-            '-', '`', '&', '@', '\'', '"', '#', '{', '}', '(', ')', '$', ',', ';', '|', '<', '>', ' ', '.', '\\', '/', '\t', '^',
-        };
 
         internal static List<CompletionResult> CompleteVariable(CompletionContext context)
         {
@@ -4642,9 +4431,7 @@ namespace System.Management.Automation
 
                     if (wildcardPattern.IsMatch(userPath))
                     {
-                        var completedName = (userPath.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                                ? prefix + userPath
-                                                : prefix + "{" + userPath + "}";
+                        var completedName = GenerateVariableCompletionText(userPath, prefix, colon != -1);
                         var tooltip = userPath;
                         var ast = astTarget;
 
@@ -4703,7 +4490,7 @@ namespace System.Management.Automation
             else
             {
                 provider = wordToComplete.Substring(0, colon + 1);
-                if (s_variableScopes.Contains(provider, StringComparer.OrdinalIgnoreCase))
+                if (colon == 0 || s_variableScopes.Contains(provider, StringComparer.OrdinalIgnoreCase))
                 {
                     pattern = "variable:" + wordToComplete.Substring(colon + 1) + "*";
                 }
@@ -4740,10 +4527,8 @@ namespace System.Management.Automation
                             }
                         }
 
-                        var completedName = (name.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                                ? prefix + provider + name
-                                                : prefix + "{" + provider + name + "}";
-                        AddUniqueVariable(hashedResults, results, completedName, name, tooltip);
+                        AddUniqueVariable(hashedResults, results,
+                            GenerateVariableCompletionText(provider + name, prefix, colon != -1), name, tooltip);
                     }
                 }
             }
@@ -4763,10 +4548,7 @@ namespace System.Management.Automation
                         if (!string.IsNullOrEmpty(name))
                         {
                             name = "env:" + name;
-                            var completedName = (name.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                                    ? prefix + name
-                                                    : prefix + "{" + name + "}";
-                            AddUniqueVariable(hashedResults, results, completedName, name, "[string]" + name);
+                            AddUniqueVariable(hashedResults, results, GenerateVariableCompletionText(name, prefix), name, "[string]" + name);
                         }
                     }
                 }
@@ -4778,11 +4560,8 @@ namespace System.Management.Automation
             {
                 if (wildcardPattern.IsMatch(specialVariable))
                 {
-                    var completedName = (specialVariable.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                            ? prefix + specialVariable
-                                            : prefix + "{" + specialVariable + "}";
-
-                    AddUniqueVariable(hashedResults, results, completedName, specialVariable, specialVariable);
+                    AddUniqueVariable(hashedResults, results, 
+                        GenerateVariableCompletionText(specialVariable, prefix, colon != -1), specialVariable, specialVariable);
                 }
             }
 
@@ -4804,12 +4583,8 @@ namespace System.Management.Automation
                             var name = driveInfo.Name;
                             if (name != null && !string.IsNullOrWhiteSpace(name) && name.Length > 1)
                             {
-                                var completedName = (name.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                                        ? prefix + name + ":"
-                                                        : prefix + "{" + name + ":}";
-
                                 var tooltip = string.IsNullOrEmpty(driveInfo.Description) ? name : driveInfo.Description;
-                                AddUniqueVariable(hashedResults, results, completedName, name, tooltip);
+                                AddUniqueVariable(hashedResults, results, GenerateVariableCompletionText(name + ':', prefix), name, tooltip);
                             }
                         }
                     }
@@ -4820,10 +4595,7 @@ namespace System.Management.Automation
                 {
                     if (scopePattern.IsMatch(scope))
                     {
-                        var completedName = (scope.IndexOfAny(s_charactersRequiringQuotes) == -1)
-                                                ? prefix + scope
-                                                : prefix + "{" + scope + "}";
-                        AddUniqueVariable(hashedResults, results, completedName, scope, scope);
+                        AddUniqueVariable(hashedResults, results, GenerateVariableCompletionText(scope, prefix), scope, scope);
                     }
                 }
             }
@@ -4838,6 +4610,58 @@ namespace System.Management.Automation
                 hashedResults.Add(completionText);
                 results.Add(new CompletionResult(completionText, listItemText, CompletionResultType.Variable, tooltip));
             }
+        }
+
+        private static string GenerateVariableCompletionText(string value, string prefix)
+        {
+            return GenerateVariableCompletionText(value, prefix, true);
+        }
+
+        /// <summary>
+        /// Generate a final variable completion suggestion from a name, a prefix (`$` or `@`) and a 
+        /// hint as to whether the completion is known to have a scope, drive, or provider already
+        /// specified.  Braces will wrap the name if the name does not meet the requirements for the
+        /// simple syntax.  Additionally, the name will be prefixed with a `:` if there is no scope,
+        /// drive, or provider specified, but either a `:` already appears in the name or if the name
+        /// starts with a `?` and is longer than 1 character and doesn't require braces.
+        /// </summary>
+        private static string GenerateVariableCompletionText(string name, string prefix, bool hasProvider)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return string.Empty;
+            }
+
+            char firstChar = name[0];
+            bool isNotSingleChar = name.Length > 1;
+            bool startsWithQM = isNotSingleChar && firstChar == '?';
+            bool hasColon = hasProvider || name.Contains(':');
+            bool braceVariable = !firstChar.IsVariableStart() || (startsWithQM && hasProvider) ||
+                isNotSingleChar && (firstChar == '$' || firstChar == '^');
+            if (!braceVariable)
+            {
+                bool lastCharWasColon = !hasProvider && firstChar == ':';
+
+                // Enumerate through the string, but the first character is already
+                // evaluated with special rules so lets skip it.
+                CharEnumerator ce_name = name.GetEnumerator();
+                for (ce_name.MoveNext(); ce_name.MoveNext();)
+                {
+                    char c = ce_name.Current;
+                    if ((lastCharWasColon && c == ':') || !(c.IsIdentifierFollow() || c == '?' || c == ':'))
+                    {
+                        braceVariable = true;
+                        break;
+                    }
+
+                    lastCharWasColon = c == ':';
+                }
+            }
+
+            // Assembly the final variable notation completion suggestion
+            return prefix + (braceVariable ?
+                "{" + CodeGeneration.EscapeVariableName((!hasProvider && hasColon ? ":" : string.Empty) + name) + "}" :
+                (!hasProvider && (hasColon || startsWithQM) ? ":" : string.Empty) + name);
         }
 
         private class FindVariablesVisitor : AstVisitor
@@ -6512,34 +6336,20 @@ namespace System.Management.Automation
 
         internal static string HandleDoubleAndSingleQuote(ref string wordToComplete)
         {
-            string quote = string.Empty;
-
-            if (!string.IsNullOrEmpty(wordToComplete) && (wordToComplete[0].IsSingleQuote() || wordToComplete[0].IsDoubleQuote()))
+            if (!string.IsNullOrEmpty(wordToComplete))
             {
-                char frontQuote = wordToComplete[0];
-                int length = wordToComplete.Length;
-
-                if (length == 1)
+                char firstChar = wordToComplete[0];
+                if (firstChar.IsSingleQuote() || firstChar.IsDoubleQuote())
                 {
-                    wordToComplete = string.Empty;
-                    quote = frontQuote.IsSingleQuote() ? "'" : "\"";
-                }
-                else if (length > 1)
-                {
-                    if ((wordToComplete[length - 1].IsDoubleQuote() && frontQuote.IsDoubleQuote()) || (wordToComplete[length - 1].IsSingleQuote() && frontQuote.IsSingleQuote()))
-                    {
-                        wordToComplete = wordToComplete.Substring(1, length - 2);
-                        quote = frontQuote.IsSingleQuote() ? "'" : "\"";
-                    }
-                    else if (!wordToComplete[length - 1].IsDoubleQuote() && !wordToComplete[length - 1].IsSingleQuote())
-                    {
-                        wordToComplete = wordToComplete.Substring(1);
-                        quote = frontQuote.IsSingleQuote() ? "'" : "\"";
-                    }
+                    int length = wordToComplete.Length;
+                    wordToComplete = length == 1 ? string.Empty :
+                        (firstChar.IsSingleQuote() ? wordToComplete[length - 1].IsSingleQuote() : wordToComplete[length - 1].IsDoubleQuote()) ?
+                            wordToComplete.Substring(1, length - 2) : wordToComplete.Substring(1);
+                    return firstChar.IsSingleQuote() ? "'" : "\"";
                 }
             }
 
-            return quote;
+            return string.Empty;
         }
 
         internal static bool IsSplattedVariable(Ast targetExpr)
@@ -6605,14 +6415,8 @@ namespace System.Management.Automation
                         continue;
                     }
 
-                    var completionText = memberInfo.Name;
-
-                    // Handle scenarios like this: $aa | add-member 'a b' 23; $aa.a<tab>
-                    if (completionText.IndexOfAny(s_charactersRequiringQuotes) != -1)
-                    {
-                        completionText = completionText.Replace("'", "''");
-                        completionText = "'" + completionText + "'";
-                    }
+                    // QuoteMemberName handles scenarios like this: $aa | add-member 'a b' 23; $aa.a<tab>
+                    var completionText = CodeGeneration.QuoteMemberName(memberInfo.Name);
 
                     var isMethod = memberInfo is PSMethodInfo;
                     if (isMethod)
@@ -6655,14 +6459,8 @@ namespace System.Management.Automation
 
                         if (pattern.IsMatch(key))
                         {
-                            // Handle scenarios like this: $hashtable["abc#d"] = 100; $hashtable.ab<tab>
-                            if (key.IndexOfAny(s_charactersRequiringQuotes) != -1)
-                            {
-                                key = key.Replace("'", "''");
-                                key = "'" + key + "'";
-                            }
-
-                            results.Add(new CompletionResult(key, key, CompletionResultType.Property, key));
+                            // QuoteMemberName handles scenarios like this: $hashtable["abc#d"] = 100; $hashtable.ab<tab>
+                            results.Add(new CompletionResult(CodeGeneration.QuoteMemberName(key), key, CompletionResultType.Property, key));
                         }
                     }
                 }
@@ -6712,32 +6510,6 @@ namespace System.Management.Automation
             }
 
             return false;
-        }
-
-        private static bool CompletionRequiresQuotes(string completion, bool escape)
-        {
-            // If the tokenizer sees the completion as more than two tokens, or if there is some error, then
-            // some form of quoting is necessary (if it's a variable, we'd need ${}, filenames would need [], etc.)
-
-            Language.Token[] tokens;
-            ParseError[] errors;
-            Language.Parser.ParseInput(completion, out tokens, out errors);
-
-            char[] charToCheck = escape ? new[] { '$', '[', ']', '`' } : new[] { '$', '`' };
-
-            // Expect no errors and 2 tokens (1 is for our completion, the other is eof)
-            // Or if the completion is a keyword, we ignore the errors
-            bool requireQuote = !(errors.Length == 0 && tokens.Length == 2);
-            if ((!requireQuote && tokens[0] is StringToken) ||
-                (tokens.Length == 2 && (tokens[0].TokenFlags & TokenFlags.Keyword) != 0))
-            {
-                requireQuote = false;
-                var value = tokens[0].Text;
-                if (value.IndexOfAny(charToCheck) != -1)
-                    requireQuote = true;
-            }
-
-            return requireQuote;
         }
 
         private static bool ProviderSpecified(string path)
