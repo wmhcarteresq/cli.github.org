@@ -1801,7 +1801,15 @@ namespace System.Management.Automation.Language
             for (int index = 0; index < parameterAst.Attributes.Count; index++)
             {
                 var attributeAst = parameterAst.Attributes[index];
-                var attribute = attributeAst.GetAttribute();
+                Attribute attribute;
+                try
+                {
+                    attribute = attributeAst.GetAttribute();
+                }
+                catch (RuntimeException)
+                {
+                    continue;
+                }
 
                 if (attribute is ExperimentalAttribute expAttribute)
                 {
