@@ -7387,15 +7387,22 @@ namespace Microsoft.PowerShell.Commands
 
             set
             {
-                // Check for UTF-7 by checking for code page 65000
-                // See: https://docs.microsoft.com/en-us/dotnet/core/compatibility/corefx#utf-7-code-paths-are-obsolete
-                if (value != null && value.CodePage == 65000)
-                {
-                    _provider.WriteWarning(PathUtilsStrings.Utf7EncodingObsolete);
-                }
+                WarnIfUtf7Encoding(value);
                 _encoding = value;
                 // If an encoding was explicitly set, be sure to capture that.
                 WasStreamTypeSpecified = true;
+
+                void WarnIfUtf7Encoding(Encoding value)
+                {
+                    const int CodePageUtf7 = 65000;
+
+                    // Use the recommended pattern to check for UTF-7.
+                    // https://docs.microsoft.com/dotnet/core/compatibility/core-libraries/5.0/utf-7-code-paths-obsolete
+                    if (value is { CodePage: CodePageUtf7 })
+                    {
+                        _provider.WriteWarning(PathUtilsStrings.Utf7EncodingObsolete);
+                    }
+                }
             }
         }
 
