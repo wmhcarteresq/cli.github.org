@@ -992,6 +992,24 @@ class InheritedClassTest : System.Attribute
         $res.CompletionMatches.CompletionText | Should -Contain '-ProgressAction'
     }
 
+    it 'Should hide common parameters when attribute is set' {
+        $res = TabExpansion2 -inputScript @'
+function Verb-Noun
+{
+    [CmdletBinding(HideCommonParameters)]
+    Param
+    (
+        [Parameter()]
+        [string[]]
+        $Param1
+    )
+}
+Verb-Noun -
+'@
+        $res.CompletionMatches.Count | Should -be 1
+        $res.CompletionMatches[0].CompletionText | Should -Be '-Param1'
+    }
+
     it 'Should complete enum class members for Enums in script text' {
         $res = TabExpansion2 -inputScript 'enum Test1 {Val1};([Test1]"").'
         $res.CompletionMatches.CompletionText[0] | Should -Be 'value__'
