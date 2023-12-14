@@ -1123,34 +1123,24 @@ namespace System.Management.Automation
         /// <summary>
         /// The verb name, used to begin command names.
         /// </summary>
-        public string Verb
-        {
-            get; set;
-        }
+        public string Verb { get; init; }
 
         /// <summary>
         /// The alias prefix, recommended for aliases to commands that begin with this verb.
         /// </summary>
-        public string AliasPrefix
-        {
-            get; set;
-        }
+        public string AliasPrefix { get; init; }
 
         /// <summary>
         /// The name of the functional category of commands that begin with this verb.
         /// </summary>
-        public string Group
-        {
-            get; set;
-        }
+        public string Group { get; init; }
 
         /// <summary>
         /// Explains what the verb is meant to do with its object.
         /// </summary>
-        public string Description
-        {
-            get; set;
-        }
+        public string Description { get; init; }
+
+        internal VerbInfo() { }
     }
 
     internal static class Verbs
