@@ -6542,8 +6542,6 @@ namespace System.Management.Automation.Language
             NonVirtual,
         }
 
-        internal sealed record ArgumentWithName(string Name, object Value);
-
         private sealed class KeyComparer : IEqualityComparer<PSInvokeMemberBinderKeyType>
         {
             public bool Equals(PSInvokeMemberBinderKeyType x, PSInvokeMemberBinderKeyType y)
