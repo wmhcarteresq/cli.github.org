@@ -6917,7 +6917,7 @@ namespace System.Management.Automation.Language
             {
                 object arg = args[i].Value;
                 string argName = string.Empty;
-                if (callInfo.ArgumentNames.Count >= i)
+                if (callInfo.ArgumentNames.Count > i)
                 {
                     argName = callInfo.ArgumentNames[i];
                 }
