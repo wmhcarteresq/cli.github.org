@@ -110,7 +110,6 @@ jobs:
   parameters:
     displayName: Approve Copy Global tool packages to PSInfra storage
     jobName: CopyBlobApproval
-    dependsOnJob: PSInfraReleaseBlobPublic
     instructions: |
       Approval for Copy global tool packages to PSInfra storage
 
