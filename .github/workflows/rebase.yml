@@ -1,39 +1,69 @@
-# This cannot rebase workflow changes into a PR
-# It also only works if the GITHUB_TOKEN has permission to push to the branch
-# see: https://github.com/cirrus-actions/rebase/issues/12#issuecomment-632594995
 on:
-  issue_comment:
-    types: [created]
-name: Automatic Rebase
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'src/**/*'
+      - '.github/workflows/macos.yml'
+      - 'tools/packaging/**/*'
+      - 'assets/manpages/**/*'
+      - 'tests/powershell/**/*'
+      - 'build.psm1'
+      - 'tools/ci.psm1'
+
+name: 'macOS CI'
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: pwsh
+    working-directory: powershell
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  POWERSHELL_TELEMETRY_OPTOUT: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  HOMEBREW_NO_ANALYTICS: 1
+  __SuppressAnsiEscapeSequences: 1
+  nugetMultiFeedWarnLevel: none
+
 jobs:
-  rebase:
-    permissions:
-      contents: write  # for cirrus-actions/rebase to push code to rebase
-      pull-requests: write  # for actions/github-script to create PR comment
-    name: Rebase
-    if: github.event.issue.pull_request != '' && contains(github.event.comment.body, '/rebase')
-    runs-on: ubuntu-latest
+  macOSBuild:
+    name: 'macOS Build'
+    runs-on: macos-latest-arm64
     steps:
-    - name: Checkout the latest code
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      with:
-        fetch-depth: 0
-    - name: Post rebase started comment to pull request
-      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-      continue-on-error: true
-      with:
-        script: |
-          const backport_start_body = `Started rebase: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-          await github.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: backport_start_body
-          });
-    - name: Automatic Rebase
-      uses: cirrus-actions/rebase@b87d48154a87a85666003575337e27b8cd65f691 # 1.8
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: './powershell'
+
+      - name: Build
+        id: Build
+        uses: ./.github/workflows/composite/ci-build
+  macOSTest:
+    name: 'macOS Test'
+    runs-on: macos-latest-arm64
+    needs: macOSBuild
+    strategy:
+      matrix:
+        Purpose: ['UnelevatedPesterTests', 'ElevatedPesterTests']
+        TagSet: ['CI', 'Others']
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build
+        id: Build
+        uses: ./.github/workflows/composite/nix-test
+        with:
+          purpose: ${{ matrix.Purpose }}
+          tagSet: ${{ matrix.TagSet }}
+
+  packageMac:
+    name: 'Package macOS'
+    runs-on: macos-latest-arm64
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Bootstrap Packaging
+        run: |
+          import-module ./build.psm1
+          start-psbootstrap -package
+
