@@ -438,6 +438,15 @@ function Push-Artifact
         # In Azure DevOps
         Write-Host "##vso[artifact.upload containerfolder=$artifactName;artifactname=$artifactName;]$Path"
     }
+    if ($env:RUNNER_TEMP) {
+        # In GitHub Actions
+        $artifactPath = Join-Path $env:RUNNER_TEMP $artifactName
+        if (!(Test-Path $artifactPath)) {
+            $null = New-Item -ItemType Directory -Path $artifactPath
+        }
+
+        Copy-Item -Path $Path -Destination $artifactPath -Force -Verbose
+    }
 }
 
 function Compress-CoverageArtifacts

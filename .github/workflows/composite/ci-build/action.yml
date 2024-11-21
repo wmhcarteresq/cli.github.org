@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+name: "Bootstrap build for CI"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Bootstrap
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+          Import-Module .\tools\ci.psm1
+          Invoke-CIInstall -SkipUser
+          Write-Verbose -Verbose "Start Sync-PSTags"
+          Sync-PSTags -AddRemoteIfMissing
+          Write-Verbose -Verbose "End Sync-PSTags"
+
+    - name: Build
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+        Import-Module .\tools\ci.psm1
+        Invoke-CIBuild
+
+    - name: XUnit Tests
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+        Import-Module .\tools\ci.psm1
+        Restore-PSOptions
+        Invoke-CIxUnit -SkipFailing
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: build
+        pattern: '**/*'
+        path: $(RUNNER_TEMP)/build

@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+name: "Run non-Windows tests"
+
+inputs:
+  purpose:
+    type: string
+    required: true
+  tagSet:
+    type: string
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Capture Environment
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+        Get-ChildItem -Path env: | Out-String -width 9999 -Stream | write-Verbose -Verbose
+
+    - name: Download a single artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: build
+
+    - name: Bootstrap
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+          Import-Module .\tools\ci.psm1
+          Invoke-CIInstall -SkipUser
+          Write-Verbose -Verbose "Start Sync-PSTags"
+          Sync-PSTags -AddRemoteIfMissing
+          Write-Verbose -Verbose "End Sync-PSTags"
+
+    - name: Capture artifacts directory
+      shell: pwsh
+      run: |
+          Get-ChildItem "$(GITHUB_WORKSPACE)\*" -Recurse
+
+    - name: Bootstrap
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+        Import-Module .\tools\ci.psm1
+        Invoke-CIInstall -SkipUser
+
+    - name: Extract some files
+      shell: pwsh
+      run: |
+        7z x $(GITHUB_WORKSPACE)/build/build.zip -o$(GITHUB_WORKSPACE)/bins
+
+    - name: Fix permissions
+      shell: bash
+      run: |
+        find "$(GITHUB_WORKSPACE)/bins" -type d -exec chmod +rwx {} \;
+        find "$(GITHUB_WORKSPACE)/bins" -type f -exec chmod +rw {} \;
+      continue-on-error: true
+
+    - name: Capture extracted build ZIP
+      shell: pwsh
+      run: |
+        Get-ChildItem "$(GITHUB_WORKSPACE)/bins/*" -Recurse -ErrorAction SilentlyContinue
+      continue-on-error: true
+    - name: Test
+      shell: pwsh
+      working-directory: ./powershell
+      run: |
+        Import-Module .\tools\ci.psm1
+        Restore-PSOptions -PSOptionsPath '$(System.ArtifactsDirectory)\build\psoptions.json'
+        $options = (Get-PSOptions)
+        $rootPath = '$(GITHUB_WORKSPACE)\bins'
+        $originalRootPath = Split-Path -path $options.Output
+        $path = Join-Path -path $rootPath -ChildPath (split-path -leaf -path $originalRootPath)
+        $pwshPath = Join-Path -path $path -ChildPath 'pwsh'
+        chmod a+x $pwshPath
+        $options.Output = $pwshPath
+        Set-PSOptions $options
+        Invoke-CITest -Purpose '${{ inputs.purpose }}' -TagSet '${{ inputs.tagSet }}' -TitlePrefix '${{ inputs.buildName }}'
+      continue-on-error: true
