@@ -2669,12 +2669,6 @@ namespace Microsoft.PowerShell.Commands
                 !string.IsNullOrEmpty(path),
                 "The caller should verify path");
 
-            // Get the parent path
-            string parentPath = GetParentPath(path, null);
-
-            // The directory name
-            string childName = GetChildName(path);
-
             ErrorRecord error = null;
             if (!Force && ItemExists(path, out error))
             {
@@ -2704,7 +2698,7 @@ namespace Microsoft.PowerShell.Commands
 
                 if (ShouldProcess(resource, action))
                 {
-                    var result = Directory.CreateDirectory(Path.Combine(parentPath, childName));
+                    var result = Directory.CreateDirectory(path);
 
                     if (streamOutput)
                     {
